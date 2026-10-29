@@ -99,9 +99,14 @@ class PhantomDetector:
         and predicts real-time survival probability under counterfactual slider values.
         """
         X_base = full_df[self.features].head(100).copy()
-        y_base = full_df["is_ghost"].head(100).values
+        y_base = full_df["is_ghost"].head(100).values.copy()
         if np.sum(y_base == 1) < 2:
             y_base[:2] = 1
+        if np.sum(y_base == 0) < 2:
+            y_base[-2:] = 0
+
+        # Ensure the classifier is fitted in this session (even when loading from cache!)
+        self.model.fit(X_base, y_base)
 
         # Compute feature attribution by measuring probability drop when each feature is reset to median
         single_df = pd.DataFrame([target_row])[self.features].copy()
