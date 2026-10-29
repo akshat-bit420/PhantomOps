@@ -92,6 +92,39 @@ class PhantomDetector:
 
         print(f"🎯 Detection Complete: Flagged {len(flagged_anomalies)} high-confidence ghost resources.")
         return flagged_anomalies
+        
+    def explain_and_simulate(self, full_df: pd.DataFrame, target_row: dict, sim_mem_pct: float, sim_threads: int) -> dict:
+        """
+        Uses TabPFNClassifier zero-shot perturbation to compute feature blame
+        and predicts real-time survival probability under counterfactual slider values.
+        """
+        X_base = full_df[self.features].head(100).copy()
+        y_base = full_df["is_ghost"].head(100).values
+        if np.sum(y_base == 1) < 2:
+            y_base[:2] = 1
+
+        # Compute feature attribution by measuring probability drop when each feature is reset to median
+        single_df = pd.DataFrame([target_row])[self.features].copy()
+        base_prob = float(self.model.predict_proba(single_df)[0, 1])
+
+        attributions = {}
+        for feat in self.features:
+            mutated = single_df.copy()
+            mutated[feat] = float(X_base[feat].median())
+            new_prob = float(self.model.predict_proba(mutated)[0, 1])
+            attributions[feat] = round(max(0.01, abs(base_prob - new_prob)) * 100, 1)
+
+        # Counterfactual prediction with user's live slider inputs
+        cf_df = single_df.copy()
+        cf_df["memory_utilization_pct"] = float(sim_mem_pct)
+        cf_df["active_connections"] = int(sim_threads)
+        cf_prob = float(self.model.predict_proba(cf_df)[0, 1])
+
+        return {
+            "base_confidence_pct": round(base_prob * 100, 2),
+            "counterfactual_confidence_pct": round(cf_prob * 100, 2),
+            "attributions": attributions
+        }    
 
     def forecast_doomsday_trajectory(self, full_df: pd.DataFrame, target_row: dict) -> dict:
         reg_features = ["cpu_utilization_pct", "memory_utilization_pct", "active_connections", "uptime_hours"]
