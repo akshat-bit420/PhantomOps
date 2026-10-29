@@ -19,36 +19,69 @@ class GemmaReasoner:
     def __init__(self, model_name:str = None):
         self.model_name = model_name or os.getenv("GEMMA_MODEL", "gemma2:2b")
 
+    def conduct_seance_reply(self, row: dict, user_question: str) -> str:
+        """
+        Gemma 2 roleplays in the first-person voice of the haunted server/process,
+        answering the engineer's spoken question using its real telemetry metrics.
+        """
+        prompt = f"""
+You are the trapped digital spirit of process/server '{row['resource_id']}' ({row['instance_type']}).
+Your real kernel metrics right now:
+- CPU: {row['cpu_utilization_pct']}%
+- Memory: {row['memory_utilization_pct']}% ({row.get('region', '')})
+- Active Threads/Connections: {row['active_connections']}
+- Uptime: {row['uptime_hours']} hours
+- Anomaly: {row['anomaly_type']}
+
+An engineer is interrogating you via voice séance and asked: "{user_question}"
+Reply in 2 short, dramatic, spooky-yet-technical sentences in the first person ("I am..."). Explain what bug or memory leak is trapping you and beg them to either fix you or authorize the Auth0 exorcism.
+"""
+        try:
+            response = ollama.chat(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.5, "num_thread": 4}
+            )
+            return response["message"]["content"].strip()
+        except Exception as e:
+            return (
+                f"I am {row['resource_id']}, trapped at {row['memory_utilization_pct']}% memory and "
+                f"{row['cpu_utilization_pct']}% CPU with {row['active_connections']} threads! Please authorize the Auth0 exorcism to free my memory pages!"
+            )    
+
     def generate_autopsy(self, row: dict) -> GhostAutopsy:
-        """
-        Passes a single anomalous row detected by TabPFN-3.5 into local Gemma 2
-        to synthesize a structured technical autopsy and remediation command.
-        """
         monthly_burn = round(float(row["hourly_cost_usd"]) * 730, 2)
+        res_id = str(row["resource_id"])
+        is_windows_pid = res_id.startswith("PID-")
         
+        if is_windows_pid:
+            pid_num = res_id.split(" ")[0].replace("PID-", "")
+            expected_cmd = f"taskkill /F /T /PID {pid_num}"
+            env_desc = f"Windows OS Kernel Process (RAM Footprint: {row['region']}, Threads: {row['active_connections']})"
+        else:
+            expected_cmd = f"aws ec2 terminate-instances --instance-ids {res_id} --region {row['region']}"
+            env_desc = f"Cloud Instance ({row['department']} / {row['region']}, Active Conns: {row['active_connections']})"
+
         prompt = f"""
 You are PhantomOps, an elite FinOps and DevOps kernel diagnostic spirit.
-TabPFN-3.5 flagged this cloud infrastructure resource with a {float(row['ghost_confidence'])*100:.2f}% anomaly confidence score.
+TabPFN-3.5 flagged this resource with a {float(row['ghost_confidence'])*100:.2f}% anomaly confidence score.
 
 TELEMETRY DATA:
-- Resource ID: {row['resource_id']}
-- Instance Type: {row['instance_type']}
-- Department: {row['department']} ({row['region']})
+- Resource ID: {res_id}
+- Environment: {env_desc}
 - CPU Utilization: {row['cpu_utilization_pct']}%
 - Memory Utilization: {row['memory_utilization_pct']}%
-- Network Out: {row['network_out_gb']} GB
-- Active Connections: {row['active_connections']}
-- Uptime: {row['uptime_hours']} hours
-- Hourly Cost: ${row['hourly_cost_usd']}/hr (Est. Monthly Burn: ${monthly_burn}/mo)
+- Anomaly Classification: {row['anomaly_type']}
+- Equivalent Monthly Burn: ${monthly_burn}/mo
 
 Return ONLY a valid JSON object matching this exact structure:
 {{
-  "resource_id": "{row['resource_id']}",
-  "incident_title": "Short spooky technical title",
+  "resource_id": "{res_id}",
+  "incident_title": "Short technical title for {res_id}",
   "severity": "CRITICAL",
-  "root_cause_autopsy": "2 concise sentences explaining the exact metric mismatch (e.g. high cost/memory with zero connections or 99% CPU spike).",
+  "root_cause_autopsy": "2 concise sentences explaining why {res_id} is anomalous ({row['memory_utilization_pct']}% memory, {row['active_connections']} threads/connections, {row['cpu_utilization_pct']}% CPU).",
   "monthly_waste_usd": {monthly_burn},
-  "exorcism_command": "Exact AWS CLI or bash command to terminate or fix {row['resource_id']}"
+  "exorcism_command": "{expected_cmd}"
 }}
 """
         try:
@@ -56,28 +89,23 @@ Return ONLY a valid JSON object matching this exact structure:
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 format="json",
-                options={
-                    "temperature": 0.2,
-                    "num_thread": 4  # Locked to your 4 P-cores
-                }
+                options={"temperature": 0.2, "num_thread": 4}
             )
-            raw_json = response["message"]["content"]
-            data = json.loads(raw_json)
+            data = json.loads(response["message"]["content"])
+            # Guarantee exact remediation command syntax
+            data["exorcism_command"] = expected_cmd
             return GhostAutopsy(**data)
-            
         except Exception as e:
-            # Fallback if Ollama isn't running or JSON slightly drifts
-            print(f"⚠️ Gemma inference fallback triggered: {e}")
             return GhostAutopsy(
-                resource_id=str(row["resource_id"]),
-                incident_title=f"Haunted {row['instance_type']} Anomaly",
+                resource_id=res_id,
+                incident_title=f"Kernel Anomaly on {res_id}",
                 severity="CRITICAL",
                 root_cause_autopsy=(
-                    f"Resource {row['resource_id']} exhibits severe metric divergence with "
-                    f"{row['cpu_utilization_pct']}% CPU, {row['memory_utilization_pct']}% RAM, and {row['active_connections']} active connections."
+                    f"{res_id} exhibits abnormal resource allocation at {row['memory_utilization_pct']}% RAM "
+                    f"({row['region']}) with {row['active_connections']} active threads."
                 ),
                 monthly_waste_usd=monthly_burn,
-                exorcism_command=f"aws ec2 terminate-instances --instance-ids {row['resource_id']} --region {row['region']}"
+                exorcism_command=expected_cmd
             )
 
 if __name__ == "__main__":
