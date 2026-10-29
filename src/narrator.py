@@ -1,0 +1,71 @@
+import os
+from dotenv import load_dotenv
+from elevenlabs.client import ElevenLabs
+
+load_dotenv()
+
+class GhostNarrator:
+    """
+    Synthesizes spoken incident briefings from Gemma 2's autopsy reports using ElevenLabs TTS.
+    """
+    def __init__(self):
+        self.api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb").strip()
+        self.cache_dir = "audio_cache"
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+    def generate_briefing_audio(self, autopsy_dict: dict) -> str:
+        """
+        Generates an MP3 audio briefing for a given GhostAutopsy dict and returns the file path.
+        """
+        resource_id = autopsy_dict.get("resource_id", "unknown")
+        output_path = os.path.join(self.cache_dir, f"alert_{resource_id}.mp3")
+
+        # Return cached MP3 if already generated (saves API credits!)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            print(f"🔊 Using cached ElevenLabs audio briefing: {output_path}")
+            return output_path
+
+        if not self.api_key or "your_elevenlabs" in self.api_key:
+            print("⚠️ ElevenLabs API key not configured properly in .env")
+            return None
+
+        script = (
+            f"Phantom Ops Critical Alert for resource {resource_id}. "
+            f"{autopsy_dict.get('incident_title')}. "
+            f"{autopsy_dict.get('root_cause_autopsy')} "
+            f"Estimated financial drain is {autopsy_dict.get('monthly_waste_usd')} dollars per month. "
+            f"Awaiting human authorization via Auth0 to execute exorcism."
+        )
+
+        try:
+            print(f"🎙️ Generating ElevenLabs voice briefing for {resource_id}...")
+            client = ElevenLabs(api_key=self.api_key)
+            audio_generator = client.text_to_speech.convert(
+                voice_id=self.voice_id,
+                output_format="mp3_44100_128",
+                text=script,
+                model_id="eleven_multilingual_v2"
+            )
+            
+            with open(output_path, "wb") as f:
+                for chunk in audio_generator:
+                    if chunk:
+                        f.write(chunk)
+                        
+            print(f"✅ Audio briefing saved to: {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"⚠️ ElevenLabs TTS error: {e}")
+            return None
+
+if __name__ == "__main__":
+    narrator = GhostNarrator()
+    sample_autopsy = {
+        "resource_id": "inst-10525",
+        "incident_title": "Staging Dev Instance: Phantom-Level Anomaly Detected!",
+        "root_cause_autopsy": "The instance shows near-constant CPU utilization at 99.9% with zero active connections.",
+        "monthly_waste_usd": 620.5
+    }
+    narrator.generate_briefing_audio(sample_autopsy)
+    
