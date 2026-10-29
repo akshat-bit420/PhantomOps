@@ -6,11 +6,15 @@ load_dotenv()
 
 class GhostNarrator:
     """
-    Synthesizes spoken incident briefings from Gemma 2's autopsy reports using ElevenLabs TTS.
+    Synthesizes spoken incident briefings, voice séance replies, and exorcism sound effects
+    using ElevenLabs TTS, STT (scribe_v1), and Text-to-Sound-Effects APIs.
     """
     def __init__(self):
         self.api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        # Authoritative Commander Voice for Tab 1 Incident Briefings
         self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb").strip()
+        # Eerie/Hoarse Voice (Callum) for Tab 2 Haunted Process Séance Replies
+        self.ghost_voice_id = os.getenv("ELEVENLABS_GHOST_VOICE_ID", "N2lVS1w4EtoT3dr4eOWO").strip()
         self.cache_dir = "audio_cache"
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -83,7 +87,7 @@ class GhostNarrator:
 
     def synthesize_seance_reply(self, resource_id: str, reply_text: str) -> str:
         """
-        Synthesizes the ghost process's spoken séance answer via ElevenLabs TTS.
+        Synthesizes the ghost process's spoken séance answer via ElevenLabs TTS using a distinct eerie voice.
         """
         safe_id = "".join(c if c.isalnum() else "_" for c in str(resource_id))
         output_path = os.path.join(self.cache_dir, f"seance_{safe_id}.mp3")
@@ -92,7 +96,7 @@ class GhostNarrator:
         try:
             client = ElevenLabs(api_key=self.api_key)
             audio_generator = client.text_to_speech.convert(
-                voice_id=self.voice_id,
+                voice_id=self.ghost_voice_id,
                 output_format="mp3_44100_128",
                 text=reply_text,
                 model_id="eleven_multilingual_v2"
@@ -104,6 +108,30 @@ class GhostNarrator:
             return output_path
         except Exception as e:
             print(f"⚠️ ElevenLabs Séance TTS error: {e}")
+            return None
+
+    def generate_exorcism_sfx(self) -> str:
+        """
+        Uses ElevenLabs Text-to-Sound-Effects API to synthesize a cybernetic power-down sound when a PID dies.
+        """
+        sfx_path = os.path.join(self.cache_dir, "exorcism_sfx.mp3")
+        if os.path.exists(sfx_path) and os.path.getsize(sfx_path) > 1000:
+            return sfx_path
+        if not self.api_key:
+            return None
+        try:
+            client = ElevenLabs(api_key=self.api_key)
+            sfx_gen = client.text_to_sound_effects.convert(
+                text="Sci-fi server rack power down with a ghostly digital whoosh and electrical discharge",
+                duration_seconds=3.0
+            )
+            with open(sfx_path, "wb") as f:
+                for chunk in sfx_gen:
+                    if chunk:
+                        f.write(chunk)
+            return sfx_path
+        except Exception as e:
+            print(f"⚠️ ElevenLabs SFX error: {e}")
             return None
 
 if __name__ == "__main__":
