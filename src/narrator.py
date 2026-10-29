@@ -19,7 +19,8 @@ class GhostNarrator:
         Generates an MP3 audio briefing for a given GhostAutopsy dict and returns the file path.
         """
         resource_id = autopsy_dict.get("resource_id", "unknown")
-        output_path = os.path.join(self.cache_dir, f"alert_{resource_id}.mp3")
+        safe_id = "".join(c if c.isalnum() else "_" for c in str(resource_id))
+        output_path = os.path.join(self.cache_dir, f"alert_{safe_id}.mp3")
 
         # Return cached MP3 if already generated (saves API credits!)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
@@ -57,6 +58,52 @@ class GhostNarrator:
             return output_path
         except Exception as e:
             print(f"⚠️ ElevenLabs TTS error: {e}")
+            return None
+
+    def transcribe_seance_question(self, audio_bytes: bytes) -> str:
+        """
+        Uses ElevenLabs Speech-to-Text (scribe_v1) to transcribe the user's spoken question
+        for the local Gemma 2 model.
+        """
+        if not self.api_key:
+            return "Why are you consuming so much memory and CPU?"
+        try:
+            import io
+            client = ElevenLabs(api_key=self.api_key)
+            audio_Bio = io.BytesIO(audio_bytes)
+            audio_Bio.name = "seance_question.wav"
+            transcription = client.speech_to_text.convert(
+                file=audio_Bio,
+                model_id="scribe_v1"
+            )
+            return getattr(transcription, "text", str(transcription)).strip()
+        except Exception as e:
+            print(f"⚠️ ElevenLabs STT fallback: {e}")
+            return "Why are you haunting my system and leaking memory?"
+
+    def synthesize_seance_reply(self, resource_id: str, reply_text: str) -> str:
+        """
+        Synthesizes the ghost process's spoken séance answer via ElevenLabs TTS.
+        """
+        safe_id = "".join(c if c.isalnum() else "_" for c in str(resource_id))
+        output_path = os.path.join(self.cache_dir, f"seance_{safe_id}.mp3")
+        if not self.api_key:
+            return None
+        try:
+            client = ElevenLabs(api_key=self.api_key)
+            audio_generator = client.text_to_speech.convert(
+                voice_id=self.voice_id,
+                output_format="mp3_44100_128",
+                text=reply_text,
+                model_id="eleven_multilingual_v2"
+            )
+            with open(output_path, "wb") as f:
+                for chunk in audio_generator:
+                    if chunk:
+                        f.write(chunk)
+            return output_path
+        except Exception as e:
+            print(f"⚠️ ElevenLabs Séance TTS error: {e}")
             return None
 
 if __name__ == "__main__":
