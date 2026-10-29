@@ -194,7 +194,7 @@ def get_detector():
 
 detector = get_detector()
 
-# --- Handle Auth0 Callback Redirect ---
+# --- Auth0 Callback Handling ---
 query_params = st.query_params
 if "code" in query_params and "state" in query_params:
     state_val = urllib.parse.unquote_plus(query_params["state"])
@@ -228,17 +228,16 @@ if "code" in query_params and "state" in query_params:
             }
             st.query_params.clear()
 
-# --- Header ---
 st.title("👻 PhantomOps: Local Infrastructure Ghost & Anomaly Exorcist")
 st.caption(
-    "**Zero-Cloud-Leakage FinOps & Kernel Agent** | **TabPFN-3.5-Fast** (Classifier + Regressor + Counterfactuals) "
-    "+ **Google Gemma 2** (Local Autopsy & Séance) + **Auth0** (JWT Step-Up Gatekeeper) + **ElevenLabs** (STT + Dual-Voice TTS + SFX)"
+    "**Zero-Cloud-Leakage FinOps Agent** | **TabPFN-3.5-Fast** (Classifier + Regressor) "
+    "+ **Google Gemma 2** (Autopsy + Séance) + **Auth0** (Step-Up JWT) + **ElevenLabs** (STT + TTS)"
 )
 
 if st.session_state.auth0_verified_state:
     res_id = st.session_state.auth0_verified_state["resource_id"]
     kill_msg = st.session_state.auth0_verified_state.get("os_kill_message", "")
-    st.success(f"🔐 **Auth0 Step-Up Authorization Verified!** Ghost `{res_id}` exorcised. {kill_msg}")
+    st.success(f"🔐 **Auth0 Step-Up Verified:** Ghost `{res_id}` exorcised. {kill_msg}")
 
 if st.session_state.play_exorcism_sfx:
     sfx_file = narrator.generate_exorcism_sfx()
@@ -246,7 +245,6 @@ if st.session_state.play_exorcism_sfx:
         st.audio(sfx_file, format="audio/mp3", autoplay=True)
     st.session_state.play_exorcism_sfx = False
 
-# --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Telemetry Ingestion Mode")
     mode_choice = st.radio(
@@ -257,9 +255,9 @@ with st.sidebar:
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        run_scan = st.button("⚡ Scan Now", type="primary", use_container_width=True)
+        run_scan = st.button("⚡ Scan Now", type="primary", width='stretch')
     with col_btn2:
-        reset_btn = st.button("🔄 Reset State", use_container_width=True)
+        reset_btn = st.button("🔄 Reset State", width='stretch')
 
     uploaded_file = None
     if "Cloud CSV" in mode_choice:
@@ -279,17 +277,16 @@ with st.sidebar:
     st.divider()
     st.subheader("🏆 Sponsor Integrations")
     st.markdown("""
-    - **Prior Labs:** `TabPFNClassifier` + `TabPFNRegressor` + Counterfactual Attribution
+    - **Prior Labs:** `TabPFNClassifier` + `TabPFNRegressor`
     - **Google DeepMind:** Local `Gemma 2` Autopsy + Séance Roleplay
-    - **Auth0:** Step-Up OAuth2 + SHA-256 JWT Execution Receipt
-    - **ElevenLabs:** `scribe_v1` STT + Dual-Voice `multilingual_v2` TTS + Exorcism SFX
+    - **Auth0:** Step-Up OAuth2 + SHA-256 Execution Receipt
+    - **ElevenLabs:** `scribe_v1` STT + Multi-Voice TTS + SFX
     """)
 
-# --- Execute Scan ---
 if run_scan or uploaded_file is not None:
     if "Live Windows" in mode_choice:
         st.session_state.scan_mode = "live"
-        with st.spinner("🖥️ Snapshotting live Windows OS kernel processes via psutil & running TabPFN-3.5..."):
+        with st.spinner("Snapshotting active Windows kernel processes via psutil..."):
             csv_target = "data/live_os_telemetry.csv"
             scan_live_windows_processes(csv_target)
             st.session_state.full_df = pd.read_csv(csv_target)
@@ -303,7 +300,7 @@ if run_scan or uploaded_file is not None:
                 f.write(uploaded_file.getbuffer())
         elif not os.path.exists(csv_target):
             generate_telemetry_dataset(output_path=csv_target)
-        with st.spinner("☁️ Running local TabPFN-3.5-Fast across cloud telemetry..."):
+        with st.spinner("Running TabPFN-3.5 on cloud telemetry..."):
             st.session_state.full_df = pd.read_csv(csv_target)
             st.session_state.anomalies_df = detector.train_and_detect(csv_target)
 
@@ -316,7 +313,6 @@ if run_scan or uploaded_file is not None:
         st.session_state.audit_receipts
     )
 
-# --- Main Dashboard Body ---
 if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_df) > 0:
     anomalies = st.session_state.anomalies_df
     full_df = st.session_state.full_df
@@ -328,7 +324,7 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric(
         "Scanned Entities",
-        f"{len(full_df)} {'Live PIDs' if st.session_state.scan_mode == 'live' else 'Cloud Nodes'}"
+        f"{len(full_df)} {'Live PIDs' if st.session_state.scan_mode == 'live' else 'Nodes'}"
     )
     kpi2.metric("Detected Ghosts", f"{len(active_anomalies)} Active", delta=f"-{len(st.session_state.exorcised_ids)} Exorcised")
     kpi3.metric("Monthly Drain Estimate", f"${total_monthly_waste:,.2f}/mo", delta=f"-${saved_monthly:,.2f}/mo Saved" if saved_monthly > 0 else None)
@@ -349,7 +345,7 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
             template="plotly_dark",
             height=360
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col_table:
         st.subheader("📋 High-Confidence Phantom Queue")
@@ -358,33 +354,32 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
             lambda r: "✅ EXORCISED" if r in st.session_state.exorcised_ids else "👻 HAUNTED"
         )
         cols = ["resource_id", "status", "ghost_confidence", "memory_utilization_pct", "cpu_utilization_pct", "active_connections"]
-        st.dataframe(display_df[cols], height=330, use_container_width=True)
+        st.dataframe(display_df[cols], height=330, width='stretch')
 
     st.divider()
 
     selected_id = st.selectbox(
-        "🎯 Select a Flagged Ghost Process / Server to Investigate:",
+        "🎯 Select a Flagged Ghost Process to Investigate:",
         options=anomalies["resource_id"].tolist(),
         format_func=lambda x: (
             f"{'✅ [EXORCISED] ' if x in st.session_state.exorcised_ids else '👻 [HAUNTED] '}"
             f"{x} — {anomalies[anomalies['resource_id']==x]['anomaly_type'].values[0]} "
-            f"(TabPFN Confidence: {anomalies[anomalies['resource_id']==x]['ghost_confidence'].values[0]*100:.2f}%)"
+            f"(Confidence: {anomalies[anomalies['resource_id']==x]['ghost_confidence'].values[0]*100:.2f}%)"
         )
     )
     selected_row = anomalies[anomalies["resource_id"] == selected_id].iloc[0].to_dict()
 
-    # --- 3 Feature Tabs for the Selected Ghost ---
     tab1, tab2, tab3 = st.tabs([
-        "🧠 1. Gemma 2 Autopsy & Auth0 JWT Gatekeeper",
-        "🎙️ 2. Two-Way Voice Séance (ElevenLabs STT + Dual-Voice TTS)",
-        "📈 3. TabPFN Doomsday Forecaster & Counterfactuals"
+        "🧠 1. Gemma 2 Autopsy & Auth0 Exorcism",
+        "🎙️ 2. Two-Way Voice Séance",
+        "📈 3. TabPFN Forecaster & Counterfactuals"
     ])
 
     with tab1:
         col_left, col_right = st.columns([1.25, 1])
         with col_left:
             if st.button(f"🧠 Generate Local Gemma 2 Autopsy for {selected_id}", type="primary"):
-                with st.spinner("Running local Gemma 2 inference via Ollama..."):
+                with st.spinner("Generating local Gemma 2 root-cause autopsy via Ollama..."):
                     autopsy_obj = reasoner.generate_autopsy(selected_row)
                     st.session_state.autopsies[selected_id] = autopsy_obj.model_dump()
                     save_persisted_state(
@@ -406,61 +401,53 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
                 </div>
                 """, unsafe_allow_html=True)
 
-                if st.button(f"🔊 Synthesize Commander Alert ({selected_id})"):
-                    with st.spinner("Synthesizing Commander voice briefing via ElevenLabs..."):
-                        audio_file = narrator.generate_briefing_audio(rep)
-                        if audio_file and os.path.exists(audio_file):
-                            st.audio(audio_file, format="audio/mp3")
+                if st.button(f"🔊 Synthesize Incident Briefing ({selected_id})"):
+                    audio_file = narrator.generate_briefing_audio(rep)
+                    if audio_file and os.path.exists(audio_file):
+                        fmt = "audio/wav" if audio_file.endswith(".wav") else "audio/mp3"
+                        st.audio(audio_file, format=fmt)
 
         with col_right:
             st.markdown("### 🔐 Auth0 Human-in-the-Loop Gatekeeper")
-            st.write(
-                "Destructive kernel/cloud actions require **Auth0 Step-Up Authentication** "
-                "and generate a cryptographic SHA-256 execution receipt."
-            )
+            st.write("Verifies step-up authorization and produces an immutable SHA-256 audit entry.")
 
             cmd = st.session_state.autopsies.get(selected_id, {}).get(
                 "exorcism_command", f"taskkill /F /T /PID {selected_id}"
             )
 
             if selected_id in st.session_state.exorcised_ids:
-                st.markdown(
-                    f'<div class="exorcised-banner">✅ EXORCISED: {selected_id} has been terminated.</div>',
-                    unsafe_allow_html=True
-                )
+                st.markdown(f'<div class="exorcised-banner">✅ EXORCISED: {selected_id} terminated.</div>', unsafe_allow_html=True)
                 receipt = st.session_state.audit_receipts.get(selected_id)
                 if receipt:
                     st.markdown(f"""
                     <div class="receipt-card">
-                        <div style="color:#3fb950;font-weight:bold;margin-bottom:6px;">📜 AUTH0 STEP-UP EXECUTION RECEIPT</div>
+                        <div style="color:#3fb950;font-weight:bold;margin-bottom:6px;">📜 AUTH0 EXECUTION RECEIPT</div>
                         <div><strong>Receipt ID:</strong> {receipt['receipt_id']}</div>
                         <div><strong>Operator (sub):</strong> {receipt['operator_subject']}</div>
-                        <div><strong>Issuer (iss):</strong> {receipt['issuer']}</div>
-                        <div><strong>Command Bound:</strong> <code>{receipt['authorized_command']}</code></div>
-                        <div style="word-break:break-all;"><strong>SHA-256 Binding:</strong> <span style="color:#a371f7;">{receipt['sha256_action_binding']}</span></div>
+                        <div><strong>Command:</strong> <code>{receipt['authorized_command']}</code></div>
+                        <div style="word-break:break-all;"><strong>SHA-256:</strong> <span style="color:#a371f7;">{receipt['sha256_action_binding']}</span></div>
                     </div>
                     """, unsafe_allow_html=True)
                     st.download_button(
-                        label="⬇️ Download Signed Audit Ledger (JSON)",
+                        label="⬇️ Download Audit Ledger (JSON)",
                         data=json.dumps(receipt, indent=2),
                         file_name=f"signed_exorcism_{receipt['receipt_id']}.json",
                         mime="application/json",
-                        use_container_width=True
+                        width='stretch'
                     )
             else:
                 approval_req = gatekeeper.create_approval_request(selected_id, cmd)
-
                 if approval_req["configured"]:
                     st.link_button(
                         f"🛡️ Authorize & Exorcise {selected_id} via Auth0",
                         url=approval_req["auth_url"],
                         type="primary",
-                        use_container_width=True
+                        width='stretch'
                     )
 
-                if st.button(f"💀 Execute Immediate Local Exorcism ({selected_id})", use_container_width=True):
+                if st.button(f"💀 Execute Immediate Local Exorcism ({selected_id})", width='stretch'):
                     kill_res = kill_real_windows_process(selected_id)
-                    receipt = gatekeeper.build_audit_receipt(selected_id, cmd, {"sub": "local-kernel-operator"})
+                    receipt = gatekeeper.build_audit_receipt(selected_id, cmd, {"sub": "local-operator"})
                     st.session_state.audit_receipts[selected_id] = receipt
                     st.session_state.exorcised_ids.add(selected_id)
                     st.session_state.play_exorcism_sfx = True
@@ -474,21 +461,15 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
                     st.rerun()
 
     with tab2:
-        st.markdown("### 🎙️ Live Voice Séance: Interrogate the Haunted Process")
-        st.caption(
-            "Speak into your microphone or type a question. **ElevenLabs `scribe_v1`** transcribes your voice "
-            "→ **Local Gemma 2** answers in character as the dying process → **ElevenLabs Haunted Voice (`Callum`)** speaks back."
-        )
-        voice_recording = st.audio_input("Record a question for the ghost process:")
-        text_fallback = st.text_input(
-            "Or type your interrogation question:",
-            value="Why are you hogging so much memory and threads on my system?"
-        )
+        st.markdown("### 🎙️ Live Voice Séance: Interrogate Process")
+        st.caption("1️⃣ Click record on microphone → 2️⃣ Click stop (⏹️) and wait 1 sec → 3️⃣ Click Conduct Séance.")
+        voice_recording = st.audio_input("Record an interrogation question:")
+        text_fallback = st.text_input("Or type your question directly:", value="Why is spawn_zombie.py consuming high system resources?")
 
         if st.button("🕯️ Conduct Séance with Ghost Process", type="primary"):
-            with st.spinner("Transcribing voice & channeling local Gemma 2 spirit..."):
-                if voice_recording is not None:
-                    user_q = narrator.transcribe_seance_question(voice_recording.read())
+            with st.spinner("Processing speech & querying local Gemma 2..."):
+                if voice_recording is not None and len(voice_recording.getvalue()) > 100:
+                    user_q = narrator.transcribe_seance_question(voice_recording.getvalue())
                 else:
                     user_q = text_fallback
 
@@ -505,70 +486,47 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
             st.info(f"**🧑 You asked:** \"{log['question']}\"")
             st.warning(f"**👻 {selected_id} replies:** \"{log['reply']}\"")
             if log["audio"] and os.path.exists(log["audio"]):
-                st.audio(log["audio"], format="audio/mp3")
+                fmt = "audio/wav" if log["audio"].endswith(".wav") else "audio/mp3"
+                st.audio(log["audio"], format=fmt, autoplay=True)
 
     with tab3:
-        st.markdown("### 📈 `TabPFNRegressor` 30-Day Doomsday Forecaster & Counterfactual Simulator")
-        with st.spinner("Running local TabPFNRegressor time-series simulation..."):
-            forecast = detector.forecast_doomsday_trajectory(full_df, selected_row)
+        st.markdown("### 📈 `TabPFNRegressor` 30-Day Doomsday Trajectory")
+        forecast = detector.forecast_doomsday_trajectory(full_df, selected_row)
 
         fcol1, fcol2 = st.columns([1, 2.2])
         with fcol1:
-            st.metric("⏳ Estimated Time to OOM Crash", f"{forecast['hours_to_oom_crash']} Hours", delta="Critical Memory Trajectory", delta_color="inverse")
-            st.metric("💸 30-Day Unchecked Burn", f"${forecast['projected_30d_loss']:,.2f}", delta="Saved if Exorcised Today")
-            st.write(
-                "`TabPFNRegressor` fits on local telemetry utilization curves to forecast cumulative "
-                "cost escalation and memory saturation if this ghost process remains un-exorcised."
-            )
+            st.metric("⏳ Estimated Time to OOM", f"{forecast['hours_to_oom_crash']} Hours", delta="Memory Saturation", delta_color="inverse")
+            st.metric("💸 30-Day Projected Waste", f"${forecast['projected_30d_loss']:,.2f}")
         with fcol2:
             fig_f = go.Figure()
             fig_f.add_trace(go.Scatter(
                 x=forecast["days"], y=forecast["unfixed_cumulative_usd"],
-                mode="lines+markers", name="Unchecked Ghost Burn ($)",
+                mode="lines+markers", name="Unchecked Burn ($)",
                 line=dict(color="#ff7b72", width=3)
             ))
             fig_f.add_trace(go.Scatter(
                 x=forecast["days"], y=forecast["exorcised_cumulative_usd"],
-                mode="lines", name="Post-Auth0 Exorcism ($0 Drain)",
+                mode="lines", name="Post-Exorcism ($0)",
                 line=dict(color="#3fb950", width=3, dash="dash")
             ))
             fig_f.update_layout(
-                title=f"30-Day Cumulative Financial Drain Forecast ({selected_id})",
-                xaxis_title="Days From Today",
-                yaxis_title="Cumulative Drain (USD)",
+                title=f"Cost Escalation Model ({selected_id})",
+                xaxis_title="Days",
+                yaxis_title="USD",
                 template="plotly_dark",
-                height=300
+                height=280
             )
-            st.plotly_chart(fig_f, use_container_width=True)
+            st.plotly_chart(fig_f, width='stretch')
 
         st.divider()
-        st.markdown("#### 🧬 Prior Labs `TabPFNClassifier` Zero-Shot Attribution & Counterfactual What-If Simulator")
+        st.markdown("#### 🧬 TabPFN Counterfactual Simulator")
         cf_col1, cf_col2 = st.columns([1, 1.4])
 
         with cf_col1:
-            st.caption("Drag sliders to mutate telemetry in real time and observe when `TabPFNClassifier` reclassifies the ghost as healthy:")
-            sim_mem = st.slider(
-                "Simulated Memory Utilization (%)",
-                min_value=0.1,
-                max_value=100.0,
-                value=float(selected_row.get("memory_utilization_pct", 10.0)),
-                step=0.5
-            )
-            sim_conn = st.slider(
-                "Simulated Active Threads / Connections",
-                min_value=1,
-                max_value=250,
-                value=int(selected_row.get("active_connections", 25)),
-                step=1
-            )
+            sim_mem = st.slider("Simulate Memory (%)", 0.1, 100.0, float(selected_row.get("memory_utilization_pct", 10.0)), 0.5)
+            sim_conn = st.slider("Simulate Active Threads", 1, 250, int(selected_row.get("active_connections", 25)), 1)
             sim_res = detector.explain_and_simulate(full_df, selected_row, sim_mem, sim_conn)
-            delta_conf = round(sim_res["counterfactual_confidence_pct"] - sim_res["base_confidence_pct"], 2)
-            st.metric(
-                "Counterfactual Ghost Probability",
-                f"{sim_res['counterfactual_confidence_pct']}%",
-                delta=f"{delta_conf}% vs Actual ({sim_res['base_confidence_pct']}%)",
-                delta_color="inverse"
-            )
+            st.metric("Counterfactual Confidence", f"{sim_res['counterfactual_confidence_pct']}%")
 
         with cf_col2:
             attr_df = pd.DataFrame({
@@ -577,16 +535,11 @@ if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_
             }).sort_values(by="Blame Impact (%)", ascending=True)
 
             fig_attr = px.bar(
-                attr_df,
-                x="Blame Impact (%)",
-                y="Feature",
-                orientation="h",
-                title=f"Zero-Shot Feature Blame Attribution ({selected_id})",
-                template="plotly_dark",
-                color="Blame Impact (%)",
-                color_continuous_scale="Purples"
+                attr_df, x="Blame Impact (%)", y="Feature", orientation="h",
+                title=f"Zero-Shot Feature Attribution ({selected_id})",
+                template="plotly_dark", color="Blame Impact (%)", color_continuous_scale="Purples"
             )
-            fig_attr.update_layout(height=280, showlegend=False)
-            st.plotly_chart(fig_attr, use_container_width=True)
+            fig_attr.update_layout(height=260, showlegend=False)
+            st.plotly_chart(fig_attr, width='stretch')
 else:
-    st.info("👈 Choose **'🖥️ Live Windows PC Kernel (psutil)'** or **'☁️ Enterprise Cloud CSV'** in the sidebar and click **'⚡ Scan Now'**!")
+    st.info("👈 Select **'🖥️ Live Windows PC Kernel (psutil)'** and click **'⚡ Scan Now'**.")
