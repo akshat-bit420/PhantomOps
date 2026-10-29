@@ -3,9 +3,12 @@ import json
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 from dotenv import load_dotenv
+import urllib.parse
 
 from src.generator import generate_telemetry_dataset
+from src.live_scanner import scan_live_windows_processes, kill_real_windows_process
 from src.detector import PhantomDetector
 from src.reasoner import GemmaReasoner
 from src.gatekeeper import Auth0Gatekeeper
@@ -15,6 +18,7 @@ load_dotenv()
 
 STATE_CACHE_FILE = "data/session_state_cache.json"
 ANOMALIES_CACHE_CSV = "data/flagged_anomalies_cache.csv"
+FULL_CACHE_CSV = "data/full_telemetry_cache.csv"
 
 def load_persisted_state():
     if os.path.exists(STATE_CACHE_FILE):
@@ -23,12 +27,16 @@ def load_persisted_state():
                 return json.load(f)
         except Exception:
             pass
-    return {"autopsies": {}, "exorcised_ids": []}
+    return {"autopsies": {}, "exorcised_ids": [], "scan_mode": "cloud"}
 
-def save_persisted_state(autopsies: dict, exorcised_ids: set):
+def save_persisted_state(autopsies: dict, exorcised_ids: set, scan_mode: str = "cloud"):
     os.makedirs("data", exist_ok=True)
     with open(STATE_CACHE_FILE, "w") as f:
-        json.dump({"autopsies": autopsies, "exorcised_ids": list(exorcised_ids)}, f)
+        json.dump({
+            "autopsies": autopsies,
+            "exorcised_ids": list(exorcised_ids),
+            "scan_mode": scan_mode
+        }, f)
 
 st.set_page_config(
     page_title="PhantomOps | Ghost in the Machine Exorcist",
@@ -39,22 +47,106 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0b0e14; color: #e6edf3; }
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;800&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+
+    code, pre, .mono-text {
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+
+    .stApp {
+        background-color: #07090e;
+        color: #d1d7e0;
+    }
+
+    /* Custom Metric Tiles */
+    [data-testid="stMetric"] {
+        background: radial-gradient(circle at top left, #121824 0%, #0c1017 100%);
+        border: 1px solid #1f293d;
+        border-radius: 8px;
+        padding: 14px 18px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    [data-testid="stMetricLabel"] {
+        font-family: 'JetBrains Mono', monospace;
+        text-transform: uppercase;
+        font-size: 0.75rem !important;
+        letter-spacing: 0.08em;
+        color: #8b949e !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        color: #f0f6fc !important;
+    }
+
+    /* Incident Autopsy Card */
     .metric-card {
-        background: linear-gradient(135deg, #161b22 0%, #1f242d 100%);
+        background: #0d1117;
         border: 1px solid #30363d;
-        border-left: 4px solid #8957e5;
-        padding: 18px;
-        border-radius: 10px;
-        margin-bottom: 12px;
+        border-left: 4px solid #f85149;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 16px;
     }
+
+    /* Custom Badges */
     .critical-badge {
-        background-color: #da3633; color: white; padding: 3px 10px;
-        border-radius: 12px; font-size: 0.8rem; font-weight: bold;
+        background: rgba(248, 81, 73, 0.15);
+        color: #f85149;
+        border: 1px solid rgba(248, 81, 73, 0.4);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 600;
     }
-    .exorcised-banner {
-        background-color: #238636; color: white; padding: 12px;
-        border-radius: 8px; font-weight: bold; margin-top: 10px;
+    .ghost-tag {
+        background: rgba(163, 113, 247, 0.15);
+        color: #a371f7;
+        border: 1px solid rgba(163, 113, 247, 0.3);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+    }
+
+    /* Sidebar Clean Styling */
+    section[data-testid="stSidebar"] {
+        background-color: #090d14;
+        border-right: 1px solid #161f30;
+    }
+
+    /* Tab Navigation */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: transparent;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+        border-radius: 6px 6px 0 0;
+        padding: 8px 16px;
+        color: #8b949e;
+        background: #0d1117;
+        border: 1px solid #21262d;
+        border-bottom: none;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #161b22 !important;
+        color: #58a6ff !important;
+        border-color: #388bfd !important;
+    }
+
+    /* Primary Action Buttons */
+    button[kind="primary"] {
+        background: #238636 !important;
+        border: 1px solid #2ea043 !important;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -62,9 +154,9 @@ st.markdown("""
 persisted = load_persisted_state()
 
 if "anomalies_df" not in st.session_state:
-    if os.path.exists(ANOMALIES_CACHE_CSV) and os.path.exists("data/telemetry_billing.csv"):
+    if os.path.exists(ANOMALIES_CACHE_CSV) and os.path.exists(FULL_CACHE_CSV):
         st.session_state.anomalies_df = pd.read_csv(ANOMALIES_CACHE_CSV)
-        st.session_state.full_df = pd.read_csv("data/telemetry_billing.csv")
+        st.session_state.full_df = pd.read_csv(FULL_CACHE_CSV)
     else:
         st.session_state.anomalies_df = None
         st.session_state.full_df = None
@@ -73,106 +165,139 @@ if "autopsies" not in st.session_state:
     st.session_state.autopsies = persisted.get("autopsies", {})
 if "exorcised_ids" not in st.session_state:
     st.session_state.exorcised_ids = set(persisted.get("exorcised_ids", []))
+if "scan_mode" not in st.session_state:
+    st.session_state.scan_mode = persisted.get("scan_mode", "cloud")
 if "auth0_verified_state" not in st.session_state:
     st.session_state.auth0_verified_state = None
+if "seance_Log" not in st.session_state:
+    st.session_state.seance_Log = {}
 
 gatekeeper = Auth0Gatekeeper()
 narrator = GhostNarrator()
 reasoner = GemmaReasoner()
+# detector = PhantomDetector()
+@st.cache_resource
+def get_detector():
+    return PhantomDetector()
 
+detector = get_detector()
+
+# --- Handle Auth0 Callback Redirect ---
 # --- Handle Auth0 Callback Redirect ---
 query_params = st.query_params
 if "code" in query_params and "state" in query_params:
-    state_val = query_params["state"]
+    state_val = urllib.parse.unquote_plus(query_params["state"])
     code_val = query_params["code"]
     if state_val.startswith("exorcise_"):
         parts = state_val.split("_")
         if len(parts) >= 2:
-            approved_resource_id = parts[1]
+            # Reconstruct resource ID even if it contained underscores
+            approved_resource_id = "_".join(parts[1:-1]) if len(parts) > 2 else parts[1]
             token_res = gatekeeper.exchange_code_for_token(code_val)
+            os_kill_res = kill_real_windows_process(approved_resource_id)
+            
             st.session_state.exorcised_ids.add(approved_resource_id)
-            save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids)
+            save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids, st.session_state.scan_mode)
             st.session_state.auth0_verified_state = {
                 "resource_id": approved_resource_id,
-                "token_info": token_res
+                "token_info": token_res,
+                "os_kill_message": os_kill_res.get("message", "")
             }
             st.query_params.clear()
 
 # --- Header ---
 st.title("👻 PhantomOps: Local Infrastructure Ghost & Anomaly Exorcist")
 st.caption(
-    "**Zero-Cloud-Leakage FinOps Agent** | Powered locally by **TabPFN-3.5-Fast** (Tabular Foundation Model) "
-    "+ **Google Gemma 2** (Local Root-Cause Autopsy) + **Auth0** (Human-in-the-Loop Gatekeeper) + **ElevenLabs** (Voice Briefing)"
+    "**Zero-Cloud-Leakage FinOps & Kernel Agent** | **TabPFN-3.5-Fast** (Classifier + Regressor) "
+    "+ **Google Gemma 2** (Local Root-Cause & Séance) + **Auth0** (HITL Gatekeeper) + **ElevenLabs** (STT + TTS)"
 )
 
 if st.session_state.auth0_verified_state:
     res_id = st.session_state.auth0_verified_state["resource_id"]
-    st.success(f"🔐 **Auth0 Step-Up Authorization Verified!** Human clearance granted. Ghost resource `{res_id}` has been terminated.")
+    kill_msg = st.session_state.auth0_verified_state.get("os_kill_message", "")
+    st.success(f"🔐 **Auth0 Step-Up Authorization Verified!** Ghost `{res_id}` exorcised. {kill_msg}")
 
 # --- Sidebar Controls ---
 with st.sidebar:
-    st.header("⚙️ Telemetry Ingestion")
-    st.write("100% of tabular detection & LLM reasoning runs **locally on your CPU**. No CSV data leaves this machine.")
-    
-    uploaded_file = st.file_uploader("Upload Enterprise Cloud CSV", type=["csv"])
-    
+    st.header("⚙️ Telemetry Ingestion Mode")
+    mode_choice = st.radio(
+        "Select Target Environment:",
+        ["🖥️ Live Windows PC Kernel (psutil)", "☁️ Enterprise Cloud CSV"],
+        index=0 if st.session_state.scan_mode == "live" else 1
+    )
+
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        load_sample = st.button("⚡ Scan Telemetry", type="primary", use_container_width=True)
+        run_scan = st.button("⚡ Scan Now", type="primary", use_container_width=True)
     with col_btn2:
-        regen_data = st.button("🔄 Reset / Regen", use_container_width=True)
+        reset_btn = st.button("🔄 Reset State", use_container_width=True)
 
-    if regen_data:
-        with st.spinner("Generating fresh cloud telemetry & resetting exorcisms..."):
-            generate_telemetry_dataset()
-            st.session_state.exorcised_ids = set()
-            st.session_state.autopsies = {}
-            save_persisted_state({}, set())
-            if os.path.exists(ANOMALIES_CACHE_CSV):
-                os.remove(ANOMALIES_CACHE_CSV)
-            st.session_state.anomalies_df = None
-        st.success("Reset complete! Click Scan Telemetry.")
+    uploaded_file = None
+    if "Cloud CSV" in mode_choice:
+        uploaded_file = st.file_uploader("Or Upload Custom Cloud CSV", type=["csv"])
+
+    if reset_btn:
+        st.session_state.exorcised_ids = set()
+        st.session_state.autopsies = {}
+        save_persisted_state({}, set(), st.session_state.scan_mode)
+        for f in [ANOMALIES_CACHE_CSV, FULL_CACHE_CSV]:
+            if os.path.exists(f):
+                os.remove(f)
+        st.session_state.anomalies_df = None
+        st.rerun()
 
     st.divider()
-    st.subheader("🛡️ Active Open-Source Stack")
+    st.subheader("🏆 Sponsor Integrations")
     st.markdown("""
-    - **Tabular Engine:** `TabPFN-3.5-Fast` (Local `.safetensors`)
-    - **Reasoning LLM:** `Gemma 2 (2B)` via Local Ollama
-    - **Action Security:** `Auth0` Step-Up OAuth2/HITL
-    - **Audio Narrator:** `ElevenLabs` Multilingual v2
+    - **Prior Labs:** `TabPFNClassifier` + `TabPFNRegressor`
+    - **Google DeepMind:** Local `Gemma 2` Autopsy + Séance
+    - **Auth0:** Step-Up OAuth2 Before PID Termination
+    - **ElevenLabs:** `scribe_v1` STT + `multilingual_v2` TTS
     """)
 
-# --- Run TabPFN-3.5 Detection ---
-if load_sample or uploaded_file is not None:
-    csv_target = "data/telemetry_billing.csv"
-    if uploaded_file is not None:
-        csv_target = "data/uploaded_telemetry.csv"
-        with open(csv_target, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-    elif not os.path.exists(csv_target):
-        generate_telemetry_dataset(output_path=csv_target)
+# --- Execute Scan ---
+if run_scan or uploaded_file is not None:
+    if "Live Windows" in mode_choice:
+        st.session_state.scan_mode = "live"
+        with st.spinner("🖥️ Snapshotting live Windows OS kernel processes via psutil & running TabPFN-3.5..."):
+            csv_target = "data/live_os_telemetry.csv"
+            scan_live_windows_processes(csv_target)
+            st.session_state.full_df = pd.read_csv(csv_target)
+            st.session_state.anomalies_df = detector.train_and_detect(csv_target)
+    else:
+        st.session_state.scan_mode = "cloud"
+        csv_target = "data/telemetry_billing.csv"
+        if uploaded_file is not None:
+            csv_target = "data/uploaded_telemetry.csv"
+            with open(csv_target, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+        elif not os.path.exists(csv_target):
+            generate_telemetry_dataset(output_path=csv_target)
+        with st.spinner("☁️ Running local TabPFN-3.5-Fast across cloud telemetry..."):
+            st.session_state.full_df = pd.read_csv(csv_target)
+            st.session_state.anomalies_df = detector.train_and_detect(csv_target)
 
-    with st.spinner("🔮 Running local TabPFN-3.5-Fast forward pass across server telemetry..."):
-        detector = PhantomDetector()
-        st.session_state.full_df = pd.read_csv(csv_target)
-        st.session_state.anomalies_df = detector.train_and_detect(csv_target)
-        st.session_state.anomalies_df.to_csv(ANOMALIES_CACHE_CSV, index=False)
+    st.session_state.anomalies_df.to_csv(ANOMALIES_CACHE_CSV, index=False)
+    st.session_state.full_df.to_csv(FULL_CACHE_CSV, index=False)
+    save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids, st.session_state.scan_mode)
 
 # --- Main Dashboard Body ---
-if st.session_state.anomalies_df is not None:
+if st.session_state.anomalies_df is not None and len(st.session_state.anomalies_df) > 0:
     anomalies = st.session_state.anomalies_df
     full_df = st.session_state.full_df
 
-    # Calculate savings from exorcised ghosts
     active_anomalies = anomalies[~anomalies["resource_id"].isin(st.session_state.exorcised_ids)]
     total_monthly_waste = active_anomalies["hourly_cost_usd"].sum() * 730
     saved_monthly = (anomalies["hourly_cost_usd"].sum() * 730) - total_monthly_waste
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Total Scanned Instances", f"{len(full_df)}")
-    kpi2.metric("Detected Ghost Workloads", f"{len(active_anomalies)} Active", delta=f"-{len(st.session_state.exorcised_ids)} Exorcised")
-    kpi3.metric("Remaining Phantom Drain", f"${total_monthly_waste:,.2f}/mo", delta=f"-${saved_monthly:,.2f}/mo Saved" if saved_monthly > 0 else None)
-    kpi4.metric("TabPFN Top Confidence", f"{anomalies['ghost_confidence'].max()*100:.2f}%")
+    kpi1.metric(
+        "Scanned Entities",
+        f"{len(full_df)} {'Live PIDs' if st.session_state.scan_mode == 'live' else 'Cloud Nodes'}"
+    )
+    kpi2.metric("Detected Ghosts", f"{len(active_anomalies)} Active", delta=f"-{len(st.session_state.exorcised_ids)} Exorcised")
+    kpi3.metric("Monthly Drain Estimate", f"${total_monthly_waste:,.2f}/mo", delta=f"-${saved_monthly:,.2f}/mo Saved" if saved_monthly > 0 else None)
+    kpi4.metric("TabPFN Max Confidence", f"{anomalies['ghost_confidence'].max()*100:.2f}%")
 
     col_chart, col_table = st.columns([1.2, 1])
 
@@ -185,13 +310,9 @@ if st.session_state.anomalies_df is not None:
             size="hourly_cost_usd",
             color="anomaly_type",
             hover_name="resource_id",
-            hover_data=["instance_type", "ghost_confidence", "active_connections", "uptime_hours"],
+            hover_data=["instance_type", "ghost_confidence", "active_connections", "region"],
             template="plotly_dark",
-            labels={
-                "cpu_utilization_pct": "CPU Utilization (%)",
-                "memory_utilization_pct": "Memory Utilization (%)"
-            },
-            height=380
+            height=360
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -201,88 +322,155 @@ if st.session_state.anomalies_df is not None:
         display_df["status"] = display_df["resource_id"].apply(
             lambda r: "✅ EXORCISED" if r in st.session_state.exorcised_ids else "👻 HAUNTED"
         )
-        display_cols = ["resource_id", "status", "instance_type", "ghost_confidence", "hourly_cost_usd", "cpu_utilization_pct"]
-        st.dataframe(display_df[display_cols], height=350, use_container_width=True)
+        cols = ["resource_id", "status", "ghost_confidence", "memory_utilization_pct", "cpu_utilization_pct", "active_connections"]
+        st.dataframe(display_df[cols], height=330, use_container_width=True)
 
     st.divider()
 
-    st.subheader("🧠 Local Gemma 2 Root-Cause Autopsy & Auth0 Exorcism Console")
-
     selected_id = st.selectbox(
-        "Select a flagged Ghost Resource to inspect and exorcise:",
+        "🎯 Select a Flagged Ghost Process / Server to Investigate:",
         options=anomalies["resource_id"].tolist(),
         format_func=lambda x: (
             f"{'✅ [EXORCISED] ' if x in st.session_state.exorcised_ids else '👻 [HAUNTED] '}"
-            f"{x} ({anomalies[anomalies['resource_id']==x]['anomaly_type'].values[0]} — "
-            f"Confidence: {anomalies[anomalies['resource_id']==x]['ghost_confidence'].values[0]*100:.2f}%)"
+            f"{x} — {anomalies[anomalies['resource_id']==x]['anomaly_type'].values[0]} "
+            f"(TabPFN Confidence: {anomalies[anomalies['resource_id']==x]['ghost_confidence'].values[0]*100:.2f}%)"
         )
     )
-
     selected_row = anomalies[anomalies["resource_id"] == selected_id].iloc[0].to_dict()
 
-    col_left, col_right = st.columns([1.3, 1])
+    # --- 3 Feature Tabs for the Selected Ghost ---
+    tab1, tab2, tab3 = st.tabs([
+        "🧠 1. Gemma 2 Autopsy & Auth0 Exorcism",
+        "🎙️ 2. Two-Way Voice Séance (ElevenLabs STT + TTS)",
+        "📈 3. TabPFNRegressor Doomsday Forecaster"
+    ])
 
-    with col_left:
-        if st.button(f"🧠 Generate Local Gemma 2 Autopsy for {selected_id}", type="primary"):
-            with st.spinner(f"Querying local {os.getenv('GEMMA_MODEL', 'gemma2:2b')} via Ollama..."):
-                autopsy_obj = reasoner.generate_autopsy(selected_row)
-                st.session_state.autopsies[selected_id] = autopsy_obj.model_dump()
-                save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids)
+    with tab1:
+        col_left, col_right = st.columns([1.3, 1])
+        with col_left:
+            if st.button(f"🧠 Generate Local Gemma 2 Autopsy for {selected_id}", type="primary"):
+                with st.spinner("Running local Gemma 2 inference via Ollama..."):
+                    autopsy_obj = reasoner.generate_autopsy(selected_row)
+                    st.session_state.autopsies[selected_id] = autopsy_obj.model_dump()
+                    save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids, st.session_state.scan_mode)
 
-        if selected_id in st.session_state.autopsies:
-            rep = st.session_state.autopsies[selected_id]
-            st.markdown(f"""
-            <div class="metric-card">
-                <span class="critical-badge">{rep['severity']}</span>
-                <h4 style="margin-top:10px;">{rep['incident_title']}</h4>
-                <p><strong>Root-Cause Autopsy (Gemma 2):</strong> {rep['root_cause_autopsy']}</p>
-                <p><strong>Estimated Drain:</strong> <span style="color:#ff7b72;font-weight:bold;">${rep['monthly_waste_usd']:,.2f} / month</span></p>
-                <p><strong>Remediation Command:</strong> <code>{rep['exorcism_command']}</code></p>
-            </div>
-            """, unsafe_allow_html=True)
+            if selected_id in st.session_state.autopsies:
+                rep = st.session_state.autopsies[selected_id]
+                st.markdown(f"""
+                <div class="metric-card">
+                    <span class="critical-badge">{rep['severity']}</span>
+                    <h4 style="margin-top:10px;">{rep['incident_title']}</h4>
+                    <p><strong>Root-Cause Autopsy (Gemma 2):</strong> {rep['root_cause_autopsy']}</p>
+                    <p><strong>Estimated Drain:</strong> <span style="color:#ff7b72;font-weight:bold;">${rep['monthly_waste_usd']:,.2f} / month</span></p>
+                    <p><strong>Remediation Command:</strong> <code>{rep['exorcism_command']}</code></p>
+                </div>
+                """, unsafe_allow_html=True)
 
-            if st.button(f"🔊 Synthesize ElevenLabs Voice Briefing ({selected_id})"):
-                with st.spinner("Generating voice briefing via ElevenLabs..."):
-                    audio_file = narrator.generate_briefing_audio(rep)
-                    if audio_file and os.path.exists(audio_file):
-                        st.audio(audio_file, format="audio/mp3")
-                    else:
-                        st.warning("Could not synthesize audio. Check ELEVENLABS_API_KEY in .env.")
+                if st.button(f"🔊 Synthesize ElevenLabs Alert ({selected_id})"):
+                    with st.spinner("Synthesizing voice briefing via ElevenLabs..."):
+                        audio_file = narrator.generate_briefing_audio(rep)
+                        if audio_file and os.path.exists(audio_file):
+                            st.audio(audio_file, format="audio/mp3")
+
+        with col_right:
+            st.markdown("### 🔐 Auth0 Human-in-the-Loop Gatekeeper")
+            st.write(
+                "Before terminating a live Windows PID or production cloud node, "
+                "**Auth0 Step-Up Authentication** verifies human operator approval."
+            )
+
+            if selected_id in st.session_state.exorcised_ids:
+                st.markdown(
+                    f'<div class="exorcised-banner">✅ EXORCISED: {selected_id} has been terminated.</div>',
+                    unsafe_allow_html=True
+                )
             else:
-                cached_path = os.path.join("audio_cache", f"alert_{selected_id}.mp3")
-                if os.path.exists(cached_path):
-                    st.caption("🔊 Cached ElevenLabs Briefing Ready:")
-                    st.audio(cached_path, format="audio/mp3")
+                cmd = st.session_state.autopsies.get(selected_id, {}).get(
+                    "exorcism_command", f"taskkill /F /PID {selected_id}"
+                )
+                approval_req = gatekeeper.create_approval_request(selected_id, cmd)
 
-    with col_right:
-        st.markdown("### 🔐 Auth0 Human-in-the-Loop Gatekeeper")
-        st.write(
-            "Destructive infrastructure actions cannot be executed autonomously by the agent. "
-            "Human identity verification via **Auth0** is required before terminating this instance."
+                if approval_req["configured"]:
+                    st.link_button(
+                        f"🛡️ Authorize & Exorcise {selected_id} via Auth0",
+                        url=approval_req["auth_url"],
+                        type="primary",
+                        use_container_width=True
+                    )
+
+                if st.button(f"💀 Execute Immediate Local Exorcism ({selected_id})", use_container_width=True):
+                    kill_res = kill_real_windows_process(selected_id)
+                    st.session_state.exorcised_ids.add(selected_id)
+                    save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids, st.session_state.scan_mode)
+                    st.toast(kill_res["message"])
+                    st.rerun()
+
+    with tab2:
+        st.markdown("### 🎙️ Live Voice Séance: Interrogate the Haunted Process")
+        st.caption(
+            "Speak into your microphone or type a question. **ElevenLabs `scribe_v1`** transcribes your voice "
+            "$\rightarrow$ **Local Gemma 2** answers in character as the dying process $\rightarrow$ **ElevenLabs TTS** speaks back."
+        )
+        voice_recording = st.audio_input("Record a question for the ghost process:")
+        text_fallback = st.text_input(
+            "Or type your interrogation question:",
+            value="Why are you hogging so much memory and threads on my system?"
         )
 
-        if selected_id in st.session_state.exorcised_ids:
-            st.markdown(
-                f'<div class="exorcised-banner">✅ EXORCISED: {selected_id} has been terminated with human approval.</div>',
-                unsafe_allow_html=True
-            )
-        else:
-            cmd = st.session_state.autopsies.get(selected_id, {}).get(
-                "exorcism_command", f"aws ec2 terminate-instances --instance-ids {selected_id}"
-            )
-            approval_req = gatekeeper.create_approval_request(selected_id, cmd)
+        if st.button("🕯️ Conduct Séance with Ghost Process", type="primary"):
+            with st.spinner("Transcribing voice & channeling local Gemma 2 spirit..."):
+                if voice_recording is not None:
+                    user_q = narrator.transcribe_seance_question(voice_recording.read())
+                else:
+                    user_q = text_fallback
 
-            if approval_req["configured"]:
-                st.link_button(
-                    f"🛡️ Authorize & Exorcise {selected_id} via Auth0",
-                    url=approval_req["auth_url"],
-                    type="primary",
-                    use_container_width=True
-                )
-            
-            if st.button(f"⚡ Quick Local Sign-Off (Demo Mode) for {selected_id}", use_container_width=True):
-                st.session_state.exorcised_ids.add(selected_id)
-                save_persisted_state(st.session_state.autopsies, st.session_state.exorcised_ids)
-                st.rerun()
+                ghost_reply = reasoner.conduct_seance_reply(selected_row, user_q)
+                audio_reply_path = narrator.synthesize_seance_reply(selected_id, ghost_reply)
+                st.session_state.seance_Log[selected_id] = {
+                    "question": user_q,
+                    "reply": ghost_reply,
+                    "audio": audio_reply_path
+                }
+
+        if selected_id in st.session_state.seance_Log:
+            log = st.session_state.seance_Log[selected_id]
+            st.info(f"**🧑 You asked:** \"{log['question']}\"")
+            st.warning(f"**👻 {selected_id} replies:** \"{log['reply']}\"")
+            if log["audio"] and os.path.exists(log["audio"]):
+                st.audio(log["audio"], format="audio/mp3")
+
+    with tab3:
+        st.markdown("### 📈 `TabPFNRegressor` 30-Day Doomsday & OOM Crash Forecaster")
+        with st.spinner("Running local TabPFNRegressor time-series simulation..."):
+            forecast = detector.forecast_doomsday_trajectory(full_df, selected_row)
+
+        fcol1, fcol2 = st.columns([1, 2.2])
+        with fcol1:
+            st.metric("⏳ Estimated Time to OOM Crash", f"{forecast['hours_to_oom_crash']} Hours", delta="Critical Memory Trajectory", delta_color="inverse")
+            st.metric("💸 30-Day Unchecked Burn", f"${forecast['projected_30d_loss']:,.2f}", delta="Saved if Exorcised Today")
+            st.write(
+                "`TabPFNRegressor` fits on local telemetry utilization curves to forecast cumulative "
+                "cost escalation and memory saturation if this ghost process remains un-exorcised."
+            )
+        with fcol2:
+            fig_f = go.Figure()
+            fig_f.add_trace(go.Scatter(
+                x=forecast["days"], y=forecast["unfixed_cumulative_usd"],
+                mode="lines+markers", name="Unchecked Ghost Burn ($)",
+                line=dict(color="#ff7b72", width=3)
+            ))
+            fig_f.add_trace(go.Scatter(
+                x=forecast["days"], y=forecast["exorcised_cumulative_usd"],
+                mode="lines", name="Post-Auth0 Exorcism ($0 Drain)",
+                line=dict(color="#3fb950", width=3, dash="dash")
+            ))
+            fig_f.update_layout(
+                title=f"30-Day Cumulative Financial Drain Forecast ({selected_id})",
+                xaxis_title="Days From Today",
+                yaxis_title="Cumulative Drain (USD)",
+                template="plotly_dark",
+                height=320
+            )
+            st.plotly_chart(fig_f, use_container_width=True)
 else:
-    st.info("👈 Click **'⚡ Scan Telemetry'** in the left sidebar to run `TabPFN-3.5-Fast` on your local telemetry dataset.")
+    st.info("👈 Choose **'🖥️ Live Windows PC Kernel (psutil)'** or **'☁️ Enterprise Cloud CSV'** in the sidebar and click **'⚡ Scan Now'**!")
