@@ -1,0 +1,13 @@
+# Environment & Secrets
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Heavy Local Model Weights & Caches
+models/*.safetensors
+models/*.bin
+audio_cache/*.mp3
+data/*_cache.csv
+data/*_cache.json
